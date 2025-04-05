@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+build/
+
+# misc
+.DS_Store
+.env
+.env.local
+.env.development
+.env.production
+*.log
+
+# testing
+coverage/
+
+# IDEs and editors
+.vscode/
+.idea/
+
+# system files
+Thumbs.db
