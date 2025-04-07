@@ -4,21 +4,16 @@ import { Outlet, useLocation } from "react-router-dom";
 import authService from "./services/authService";
 import { login, logout } from "./store/authSlice";
 import { Footer, Header } from "./components";
-import background from "./assets/background.png"; 
+import background from "./assets/background.png";
 
 function App() {
   const [loading, setLoading] = useState(true);
   const dispatch = useDispatch();
   const location = useLocation();
   const user = useSelector((state) => state.auth.user);
-  
-  // Pages where you don't want to show the header
-  const headerExcludedPages = []; // e.g. ["/some-fullscreen-page"]
-  
-  // Pages where you don't want to show the footer
-  const footerExcludedPages = []; // e.g. ["/another-page"]
-  
-  // Auth pages with special background
+
+  const headerExcludedPages = [];
+  const footerExcludedPages = [];
   const authPages = ["/login", "/signup"];
 
   const shouldShowHeader = !headerExcludedPages.includes(location.pathname);
@@ -26,36 +21,33 @@ function App() {
   const isAuthPage = authPages.includes(location.pathname);
 
   useEffect(() => {
+    const token = authService.getToken();
+  
+    if (!token) {
+      dispatch(logout());
+      setLoading(false);
+      return;
+    }
+  
     const fetchUser = async () => {
-      if (user) {
-        setLoading(false);
-        return;
-      }
       try {
-        const token = authService.getToken();
-        
-        if (!token) {
-          dispatch(logout());
-          setLoading(false);
-          return;
-        }
         const userdata = await authService.getCurrentUser();
+  
         if (userdata) {
           dispatch(login(userdata));
         } else {
           dispatch(logout());
         }
       } catch (error) {
-        if (error.response && error.response.status === 401) {
-          dispatch(logout());
-        }
+        dispatch(logout());
       } finally {
         setLoading(false);
       }
     };
-
+  
     fetchUser();
-  }, [dispatch, user]);
+  }, [dispatch]);
+  
 
   if (loading) {
     return (
@@ -72,21 +64,17 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col text-gray-800">
-      {/* Main content area with conditional background */}
-      <div 
-        className={`flex-grow flex flex-col ${isAuthPage ? "bg-cover bg-center" : "bg-[#f7f7f7]"}`} 
+      <div
+        className={`flex-grow flex flex-col ${isAuthPage ? "bg-cover bg-center" : "bg-[#f7f7f7]"}`}
         style={isAuthPage ? { backgroundImage: `url(${background})` } : {}}
       >
-        {/* Conditionally render header */}
         {shouldShowHeader && <Header />}
-        
-        {/* Main content that grows to fill available space */}
+
         <main className="flex-grow">
-          <Outlet />
+          <Outlet context={{ user }} />
         </main>
       </div>
-      
-      {/* Conditionally render footer */}
+
       {shouldShowFooter && <Footer />}
     </div>
   );
