@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Hospital, X, Navigation, Map, Phone, Clock, Info, ExternalLink } from 'lucide-react';
+import background from '../../assets/background.png';
+import { MapPin, Hospital, X, Navigation, Map, Phone, Clock, Info, ExternalLink, Home, AlertTriangle, Check } from 'lucide-react';
 
 const EnhancedHospitalFinder = () => {
   const [location, setLocation] = useState(null);
@@ -9,16 +10,18 @@ const EnhancedHospitalFinder = () => {
   const [selectedHospital, setSelectedHospital] = useState(null);
   const [searchRadius, setSearchRadius] = useState(5); // in kilometers
   const [searchTerm, setSearchTerm] = useState('');
+  const [locationAccuracyWarning, setLocationAccuracyWarning] = useState(false);
   const [hospitalTypes, setHospitalTypes] = useState({
     hospital: true,
     clinic: false,
     doctors: false
   });
 
-  // Get user location
+  // Get user location with high accuracy settings
   const getUserLocation = () => {
     setLoading(true);
     setError(null);
+    setLocationAccuracyWarning(false);
     
     if (!navigator.geolocation) {
       setError("Geolocation is not supported by this browser.");
@@ -26,18 +29,32 @@ const EnhancedHospitalFinder = () => {
       return;
     }
 
+    const geoOptions = {
+      enableHighAccuracy: true,  // Request high accuracy
+      timeout: 10000,           // Time to wait for a location (10 seconds)
+      maximumAge: 0             // Always get a fresh location
+    };
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        // Check position accuracy
+        if (position.coords.accuracy > 100) { // If accuracy is worse than 100 meters
+          setLocationAccuracyWarning(true);
+        }
+        
         setLocation({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
+          accuracy: position.coords.accuracy
         });
         setLoading(false);
       },
       (err) => {
-        setError(err.message || "Unable to fetch location. Please allow location access.");
+        console.error("Geolocation error:", err);
+        setError(`Unable to fetch accurate location: ${err.message}. Please try again or check location permissions.`);
         setLoading(false);
-      }
+      },
+      geoOptions
     );
   };
 
@@ -65,8 +82,8 @@ const EnhancedHospitalFinder = () => {
       
       const queryString = typeQueries.join('');
       
-      // Use Overpass API
-      const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];(${queryString});out center;`;
+      // Enhanced Overpass API query to include address data
+      const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];(${queryString});out body;>;out skel qt;`;
 
       const response = await fetch(overpassUrl);
       
@@ -77,45 +94,84 @@ const EnhancedHospitalFinder = () => {
       const data = await response.json();
 
       // Process and enhance hospital data
-      const hospitalsWithDetails = data.elements.map((hospital, index) => {
-        // Extract additional information from tags
-        const {
-          name,
-          phone,
-          website,
-          opening_hours,
-          healthcare,
-          emergency,
-          wheelchair,
-          amenity
-        } = hospital.tags || {};
+      const hospitalsWithDetails = data.elements
+        .filter(element => element.tags && (element.tags.amenity === 'hospital' || 
+                                          element.tags.amenity === 'clinic' || 
+                                          element.tags.amenity === 'doctors'))
+        .map((hospital, index) => {
+          // Extract additional information from tags
+          const {
+            name,
+            phone,
+            website,
+            opening_hours,
+            healthcare,
+            emergency,
+            wheelchair,
+            amenity,
+            // Address related tags
+            "addr:street": street,
+            "addr:housenumber": houseNumber,
+            "addr:city": city,
+            "addr:postcode": postcode,
+            "addr:country": country
+          } = hospital.tags || {};
 
-        // Calculate coordinates properly for different element types
-        let lat = hospital.lat;
-        let lon = hospital.lon;
-        
-        if (hospital.type === 'way' && hospital.center) {
-          lat = hospital.center.lat;
-          lon = hospital.center.lon;
-        }
+          // Construct address from available components
+          let address = '';
+          if (street) {
+            address += (houseNumber ? `${houseNumber} ` : '') + street;
+            if (city || postcode) {
+              address += ', ';
+            }
+          }
+          if (city) {
+            address += city;
+            if (postcode) {
+              address += ' ';
+            }
+          }
+          if (postcode) {
+            address += postcode;
+          }
+          if (country && (street || city || postcode)) {
+            address += `, ${country}`;
+          } else if (country) {
+            address += country;
+          }
 
-        return {
-          id: hospital.id,
-          type: hospital.type,
-          lat,
-          lon,
-          display_name: name || `${amenity || 'Medical Facility'} ${index + 1}`,
-          image: `https://picsum.photos/seed/${hospital.id}/400/300`,
-          distance: calculateDistance(location.lat, location.lon, lat, lon),
-          phone: phone || null,
-          website: website || null,
-          openingHours: opening_hours || null,
-          healthcareType: healthcare || amenity || 'Medical Facility',
-          emergency: emergency === 'yes',
-          wheelchair: wheelchair === 'yes',
-          rating: (3 + Math.random() * 2).toFixed(1) // Simulated rating between 3-5
-        };
-      });
+          // Calculate coordinates properly for different element types
+          let lat = hospital.lat;
+          let lon = hospital.lon;
+          
+          if (hospital.type === 'way' && hospital.center) {
+            lat = hospital.center.lat;
+            lon = hospital.center.lon;
+          }
+
+          // Healthcare specific image based on facility type
+          const imageType = emergency === 'yes' ? 'emergency' :
+                           amenity === 'hospital' ? 'hospital' :
+                           amenity === 'clinic' ? 'clinic' : 'medical';
+
+          return {
+            id: hospital.id,
+            type: hospital.type,
+            lat,
+            lon,
+            display_name: name || `${amenity || 'Medical Facility'} ${index + 1}`,
+            image: getHealthcareImage(imageType, hospital.id),
+            distance: calculateDistance(location.lat, location.lon, lat, lon),
+            phone: phone || null,
+            website: website || null,
+            openingHours: opening_hours || null,
+            healthcareType: healthcare || amenity || 'Medical Facility',
+            emergency: emergency === 'yes',
+            wheelchair: wheelchair === 'yes',
+            address: address || null,
+            rating: (3 + Math.random() * 2).toFixed(1) // Simulated rating between 3-5
+          };
+        });
 
       // Sort hospitals by distance
       const sortedHospitals = hospitalsWithDetails.sort((a, b) => a.distance - b.distance);
@@ -127,6 +183,26 @@ const EnhancedHospitalFinder = () => {
       setError("Error fetching hospitals. Please try again.");
       setLoading(false);
     }
+  };
+
+  // Function to get healthcare related images instead of random images
+  const getHealthcareImage = (type, id) => {
+    // Define indices for specific healthcare image types
+    const types = {
+      hospital: [1, 2, 3, 4, 5, 6],
+      emergency: [7, 8, 9, 10],
+      clinic: [11, 12, 13, 14],
+      medical: [15, 16, 17, 18, 19, 20]
+    };
+    
+    // Generate a consistent index based on the facility ID
+    const hash = id.toString().split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const imageArray = types[type] || types.medical;
+    const imageIndex = hash % imageArray.length;
+    const selectedIndex = imageArray[imageIndex];
+    
+    // Return a healthcare-specific image from a predefined set
+    return `/api/placeholder/400/300?text=Medical+Facility+${selectedIndex}`;
   };
 
   // Haversine formula to calculate distance between two coordinates
@@ -153,7 +229,8 @@ const EnhancedHospitalFinder = () => {
   // Filter hospitals based on search term
   const filteredHospitals = hospitals.filter(hospital => 
     hospital.display_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    hospital.healthcareType.toLowerCase().includes(searchTerm.toLowerCase())
+    hospital.healthcareType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (hospital.address && hospital.address.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   // Toggle hospital type filter
@@ -163,6 +240,9 @@ const EnhancedHospitalFinder = () => {
       [type]: !prev[type]
     }));
   };
+
+  // Check if at least one hospital type is selected
+  const isAnyTypeSelected = Object.values(hospitalTypes).some(value => value);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 p-4 sm:p-6">
@@ -200,7 +280,7 @@ const EnhancedHospitalFinder = () => {
                 <button
                   onClick={fetchHospitals}
                   className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 sm:py-3 px-3 sm:px-4 rounded-lg shadow-md transition duration-300"
-                  disabled={loading}
+                  disabled={loading || !isAnyTypeSelected}
                 >
                   Search
                 </button>
@@ -242,7 +322,7 @@ const EnhancedHospitalFinder = () => {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Search by name or type..."
+                placeholder="Search by name, type, or address..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full py-2 px-4 pl-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -251,6 +331,17 @@ const EnhancedHospitalFinder = () => {
             </div>
           )}
         </div>
+
+        {/* Location Accuracy Warning */}
+        {locationAccuracyWarning && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800 flex items-center">
+            <AlertTriangle className="mr-2 text-yellow-500" size={16} />
+            <span>
+              Location may not be accurate (±{location?.accuracy?.toFixed(0) || '100'}m). 
+              For better results, try using a mobile device or enable high accuracy mode in your location settings.
+            </span>
+          </div>
+        )}
 
         {/* Current Location Display */}
         {location && (
@@ -291,6 +382,11 @@ const EnhancedHospitalFinder = () => {
                       src={hospital.image} 
                       alt={hospital.display_name} 
                       className="w-full h-40 object-cover"
+                      style={{
+                                  backgroundImage: `url(${background})`,
+                                  backgroundSize: "cover",
+                                  backgroundPosition: "center",
+                                }}
                     />
                     <div className="absolute top-2 right-2 bg-white rounded-full px-2 py-1 text-xs font-bold flex items-center">
                       <span className="text-yellow-500 mr-1">★</span> 
@@ -310,6 +406,13 @@ const EnhancedHospitalFinder = () => {
                       <MapPin className="mr-1 w-4 h-4 text-blue-500" />
                       {hospital.distance.toFixed(1)} km away
                     </div>
+                    
+                    {hospital.address && (
+                      <div className="flex items-start mt-2 text-sm text-gray-600">
+                        <Home className="mr-1 w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                        <span className="line-clamp-2">{hospital.address}</span>
+                      </div>
+                    )}
                     
                     <div className="flex flex-wrap gap-2 mt-4">
                       <button
@@ -368,6 +471,11 @@ const EnhancedHospitalFinder = () => {
                 src={selectedHospital.image} 
                 alt={selectedHospital.display_name} 
                 className="w-full h-48 sm:h-56 object-cover rounded-t-2xl"
+                style={{
+                            backgroundImage: `url(${background})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                          }}
               />
               <div className="p-5">
                 <div className="flex justify-between items-start">
@@ -385,6 +493,16 @@ const EnhancedHospitalFinder = () => {
                       <p>{selectedHospital.distance.toFixed(1)} km from your location</p>
                     </div>
                   </div>
+                  
+                  {selectedHospital.address && (
+                    <div className="flex items-start">
+                      <Home className="mr-2 w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium">Address</p>
+                        <p>{selectedHospital.address}</p>
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="flex items-start">
                     <Hospital className="mr-2 w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
@@ -414,23 +532,21 @@ const EnhancedHospitalFinder = () => {
                     </div>
                   )}
                   
-                  {selectedHospital.emergency && (
-                    <div className="bg-red-50 border border-red-100 rounded p-2 text-red-700 flex items-center">
-                      <Hospital className="mr-2 w-4 h-4" />
-                      Emergency services available
-                    </div>
-                  )}
-                  
-                  {selectedHospital.wheelchair && (
-                    <div className="bg-blue-50 border border-blue-100 rounded p-2 text-blue-700 flex items-center">
-                      <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        <path d="M12 8C13.1046 8 14 7.10457 14 6C14 4.89543 13.1046 4 12 4C10.8954 4 10 4.89543 10 6C10 7.10457 10.8954 8 12 8Z" fill="currentColor"/>
-                        <path d="M10 14H18M15 11H10L8 16M12 8V14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                      Wheelchair accessible
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {selectedHospital.emergency && (
+                      <div className="bg-red-50 border border-red-100 rounded-full px-3 py-1 text-red-700 text-xs flex items-center">
+                        <Hospital className="mr-1 w-3 h-3" />
+                        Emergency Services
+                      </div>
+                    )}
+                    
+                    {selectedHospital.wheelchair && (
+                      <div className="bg-blue-50 border border-blue-100 rounded-full px-3 py-1 text-blue-700 text-xs flex items-center">
+                        <Check className="mr-1 w-3 h-3" />
+                        Wheelchair Accessible
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 <div className="mt-6 grid grid-cols-2 gap-3">
@@ -465,6 +581,12 @@ const EnhancedHospitalFinder = () => {
             </div>
           </div>
         )}
+      </div>
+      
+      {/* Information Footer */}
+      <div className="w-full max-w-4xl mt-4 text-xs text-center text-gray-500">
+        <p>This application uses the OpenStreetMap Overpass API, which is free and doesn't require an API key.</p>
+        <p className="mt-1">For directions, we use Google Maps which works across all devices.</p>
       </div>
     </div>
   );
