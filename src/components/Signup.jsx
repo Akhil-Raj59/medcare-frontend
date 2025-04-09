@@ -122,11 +122,17 @@ const Signup = () => {
                     {step === 1 ? "Create Account" : "Enter OTP"}
                 </h2>
 
-                <p className="mt-2 text-center text-gray-600">
-                    {step === 1
-                        ? "Enter your details to create an account."
-                        : `We sent an OTP to ${email}.`}
-                </p>
+                {step === 1 ? (
+                    <p className="mt-2 text-center text-gray-600">
+                        Enter your details to create an account.
+                    </p>
+                ) : (
+                    <div className="mt-2 text-center text-gray-600">
+                        <p>We sent an OTP to <strong>{email}</strong>.</p>
+                        <p className="text-sm text-gray-500">Please check your Spam folder if you don’t see it.</p>
+                    </div>
+                )}
+
 
                 {error && (
                     <p className={`mt-4 text-center ${error.includes('sent') ? 'text-green-500' : 'text-red-500'}`} aria-live="assertive">
